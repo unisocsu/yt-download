@@ -1,0 +1,38 @@
+name: Run yt-dlp
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'URL להורדה'
+        required: true
+        type: string
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies (yt-dlp & ffmpeg)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          pip install --upgrade yt-dlp
+
+      - name: Run yt-dlp
+        run: |
+          yt-dlp "${{ inputs.url }}"
+
+      - name: Upload downloaded files as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: downloaded-media
+          path: ./*
+          if-no-files-found: ignore
