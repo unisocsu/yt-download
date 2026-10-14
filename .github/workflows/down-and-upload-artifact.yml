@@ -29,6 +29,26 @@ jobs:
         with:
           deno-version: v2.x
 
+      - name: Install Chromium browser for diagnostics
+        run: |
+          python -m pip install --upgrade playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Test Chromium can open YouTube
+        run: |
+          python - <<'PY'
+          from playwright.sync_api import sync_playwright
+
+          with sync_playwright() as p:
+              browser = p.chromium.launch(headless=True)
+              page = browser.new_page()
+              response = page.goto("https://www.youtube.com/", wait_until="domcontentloaded", timeout=60000)
+              print(f"YouTube HTTP status: {response.status if response else 'no response'}")
+              print(f"Page title: {page.title()}")
+              print(f"Final URL: {page.url}")
+              browser.close()
+          PY
+
       - name: Install dependencies
         run: |
           sudo apt-get update
