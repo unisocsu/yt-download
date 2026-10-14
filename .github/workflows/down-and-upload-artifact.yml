@@ -4,24 +4,24 @@ on:
   workflow_dispatch:
     inputs:
       url:
-        description: 'Page URL (DOM mode) or direct file URL (direct mode)'
+        description: 'YouTube video/page URL to open in Chromium'
         required: true
         type: string
       prepare_selector:
-        description: 'Optional CSS selector to open the download/quality dialog'
+        description: 'Optional CSS selector to click before the download button'
         required: false
         type: string
         default: ''
       download_selector:
-        description: 'CSS selector to click for the actual browser download; leave blank for a direct file URL'
-        required: false
+        description: 'CSS selector for the userscript download button'
+        required: true
         type: string
-        default: ''
+        default: 'button.ytdl-fab'
       script_url:
-        description: 'Optional HTTPS URL to a JavaScript userscript loaded before page scripts'
-        required: false
+        description: 'HTTPS URL of the userscript to inject before page scripts'
+        required: true
         type: string
-        default: ''
+        default: 'https://raw.githubusercontent.com/tsoolgee/yt-download/main/userscript/yt-download.user.js'
       timeout_seconds:
         description: 'Timeout for navigation and download (30–900 seconds)'
         required: true
@@ -68,7 +68,7 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          files = [p for p in Path("downloads").iterdir() if p.is_file()]
+          files = [p for p in Path("downloads").iterdir() if p.is_file() and p.name != "failure.png"]
           if not files:
               raise SystemExit("No file was saved in downloads/")
           for path in files:
