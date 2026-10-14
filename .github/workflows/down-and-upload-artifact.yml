@@ -8,9 +8,13 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: read
+
 jobs:
   download:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -18,21 +22,44 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
+          cache: pip
 
-      - name: Install dependencies (yt-dlp & ffmpeg)
+      - name: Set up Deno (JavaScript runtime for YouTube)
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
-          pip install --upgrade --pre yt-dlp
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade "yt-dlp[default]"
 
-      - name: Run yt-dlp
+      - name: Download media
+        env:
+          VIDEO_URL: ${{ inputs.url }}
         run: |
-          yt-dlp "${{ inputs.url }}"
+          set -euo pipefail
+          mkdir -p downloads
+          yt-dlp \
+            --no-playlist \
+            --windows-filenames \
+            --paths downloads \
+            --output "%(title).180B [%(id)s].%(ext)s" \
+            --print after_move:filepath \
+            "$VIDEO_URL"
+          if ! find downloads -maxdepth 1 -type f -print -quit | grep -q .; then
+            echo "::error::yt-dlp completed without creating a media file."
+            exit 1
+          fi
 
-      - name: Upload downloaded files as artifact
+      - name: Upload downloaded media
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: downloaded-media
-          path: ./*
-          if-no-files-found: ignore
+          path: downloads/*
+          if-no-files-found: error
+          retention-days: 3
