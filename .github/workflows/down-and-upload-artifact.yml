@@ -1,20 +1,44 @@
-name: Run yt-dlp
+name: Chromium DOM download
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: 'URL להורדה'
+        description: 'Page URL (DOM mode) or direct file URL (direct mode)'
         required: true
         type: string
+      prepare_selector:
+        description: 'Optional CSS selector to open the download/quality dialog'
+        required: false
+        type: string
+        default: ''
+      download_selector:
+        description: 'CSS selector to click for the actual browser download; leave blank for a direct file URL'
+        required: false
+        type: string
+        default: ''
+      script_url:
+        description: 'Optional HTTPS URL to a JavaScript userscript loaded before page scripts'
+        required: false
+        type: string
+        default: ''
+      timeout_seconds:
+        description: 'Timeout for navigation and download (30–900 seconds)'
+        required: true
+        type: number
+        default: 180
 
 permissions:
   contents: read
 
+concurrency:
+  group: chromium-download-${{ github.run_id }}
+  cancel-in-progress: false
+
 jobs:
   download:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -23,62 +47,40 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
 
-      - name: Set up Deno (JavaScript runtime for YouTube)
-        uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
-
-      - name: Install Chromium browser for diagnostics
+      - name: Install Chromium and Playwright
         run: |
-          python -m pip install --upgrade playwright
+          python -m pip install --upgrade pip
+          python -m pip install playwright
           python -m playwright install --with-deps chromium
 
-      - name: Test Chromium can open YouTube
+      - name: Run browser download
+        env:
+          DOWNLOAD_URL: ${{ inputs.url }}
+          PREPARE_SELECTOR: ${{ inputs.prepare_selector }}
+          DOWNLOAD_SELECTOR: ${{ inputs.download_selector }}
+          SCRIPT_URL: ${{ inputs.script_url }}
+          TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
+        run: python scripts/playwright_download.py
+
+      - name: Verify downloaded file
         run: |
           python - <<'PY'
-          from playwright.sync_api import sync_playwright
-
-          with sync_playwright() as p:
-              browser = p.chromium.launch(headless=True)
-              page = browser.new_page()
-              response = page.goto("https://www.youtube.com/", wait_until="domcontentloaded", timeout=60000)
-              print(f"YouTube HTTP status: {response.status if response else 'no response'}")
-              print(f"Page title: {page.title()}")
-              print(f"Final URL: {page.url}")
-              browser.close()
+          from pathlib import Path
+          files = [p for p in Path("downloads").iterdir() if p.is_file()]
+          if not files:
+              raise SystemExit("No file was saved in downloads/")
+          for path in files:
+              if path.stat().st_size <= 0:
+                  raise SystemExit(f"Empty output file: {path.name}")
+              print(f"Verified: {path.name} ({path.stat().st_size:,} bytes)")
           PY
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-          python -m pip install --upgrade pip
-          python -m pip install --upgrade "yt-dlp[default]"
-
-      - name: Download media
-        env:
-          VIDEO_URL: ${{ inputs.url }}
-        run: |
-          set -euo pipefail
-          mkdir -p downloads
-          yt-dlp \
-            --no-playlist \
-            --windows-filenames \
-            --paths downloads \
-            --output "%(title).180B [%(id)s].%(ext)s" \
-            --print after_move:filepath \
-            "$VIDEO_URL"
-          if ! find downloads -maxdepth 1 -type f -print -quit | grep -q .; then
-            echo "::error::yt-dlp completed without creating a media file."
-            exit 1
-          fi
-
-      - name: Upload downloaded media
-        if: success()
+      - name: Upload downloaded file
         uses: actions/upload-artifact@v4
         with:
-          name: downloaded-media
+          name: downloaded-file
           path: downloads/*
           if-no-files-found: error
           retention-days: 3
