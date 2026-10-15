@@ -2,7 +2,6 @@
 """Localhost-only bridge: send a YouTube URL to the repository workflow."""
 import json
 import os
-import re
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -21,16 +20,24 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
-        self.send_header("Access-Control-Allow-Origin", "chrome-extension://*")
+        origin = self.headers.get("Origin", "")
+        if origin.startswith("chrome-extension://"):
+            self.send_header("Access-Control-Allow-Origin", origin)
         self.send_header("Vary", "Origin")
         self.end_headers()
         self.wfile.write(payload)
 
     def do_OPTIONS(self):
+        origin = self.headers.get("Origin", "")
+        if not origin.startswith("chrome-extension://"):
+            self.send_response(403)
+            self.end_headers()
+            return
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", self.headers.get("Origin", "null"))
+        self.send_header("Access-Control-Allow-Origin", origin)
         self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Vary", "Origin")
         self.end_headers()
 
     def do_POST(self):
@@ -71,7 +78,7 @@ class Handler(BaseHTTPRequestHandler):
             except URLError as exc:
                 return self.send_json(502, {"error": f"Could not reach GitHub API: {exc.reason}"})
             return self.send_json(200, {"ok": True, "message": "Workflow dispatch accepted. Open Actions to see its run."})
-        except (ValueError, json.JSONDecodeError) as exc:
+        except (ValueError, json.JSONDecodeError):
             return self.send_json(400, {"error": "Invalid JSON request."})
 
     def log_message(self, fmt, *args):
