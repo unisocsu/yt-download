@@ -1,0 +1,73 @@
+name: yt-dlp download
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "Public video URL to download"
+        required: true
+        type: string
+      format:
+        description: "Output format"
+        required: true
+        type: choice
+        options:
+          - mp4
+          - original
+        default: mp4
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ytdlp-download-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Install yt-dlp and FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          python -m pip install --upgrade yt-dlp
+
+      - name: Validate URL
+        env:
+          VIDEO_URL: ${{ inputs.url }}
+        run: |
+          python - <<'PY'
+          import os
+          from urllib.parse import urlparse
+          u = urlparse(os.environ["VIDEO_URL"].strip())
+          allowed = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be", "music.youtube.com"}
+          if u.scheme != "https" or (u.hostname or "").lower() not in allowed:
+              raise SystemExit("Only HTTPS YouTube URLs are accepted.")
+          PY
+
+      - name: Download video
+        env:
+          VIDEO_URL: ${{ inputs.url }}
+          OUTPUT_FORMAT: ${{ inputs.format }}
+        run: |
+          mkdir -p downloads
+          if [ "$OUTPUT_FORMAT" = "mp4" ]; then
+            yt-dlp --no-playlist --no-progress --format "bv*+ba/b" --merge-output-format mp4 --output "downloads/%(title).180B [%(id)s].%(ext)s" "$VIDEO_URL"
+          else
+            yt-dlp --no-playlist --no-progress --format "bv*+ba/b" --output "downloads/%(title).180B [%(id)s].%(ext)s" "$VIDEO_URL"
+          fi
+
+      - name: Verify output
+        run: |
+          test -n "$(find downloads -maxdepth 1 -type f -print -quit)"
+          find downloads -maxdepth 1 -type f -printf '%f (%s bytes)\n'
+
+      - name: Upload download artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ytdlp-download
+          path: downloads/*
+          if-no-files-found: error
+          retention-days: 3
