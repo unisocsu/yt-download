@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "yt-download Actions",
+  "version": "1.0.0",
+  "description": "Send the current YouTube URL to your local bridge to start a GitHub Actions yt-dlp download.",
+  "permissions": ["activeTab"],
+  "host_permissions": ["http://127.0.0.1:8765/*"],
+  "action": {
+    "default_title": "Send to yt-download",
+    "default_popup": "popup.html"
+  }
+}
