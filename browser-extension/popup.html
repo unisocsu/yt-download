@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>yt-download Actions</title>
+  <style>
+    body { font: 14px system-ui, sans-serif; width: 300px; padding: 12px; }
+    button { width: 100%; padding: 9px; margin-top: 8px; }
+    select { width: 100%; padding: 7px; margin-top: 8px; }
+    #status { margin-top: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <strong>Send video to GitHub Actions</strong>
+  <select id="format">
+    <option value="mp4">MP4 (merge best video + audio)</option>
+    <option value="original">Best available, original container</option>
+  </select>
+  <button id="send">Start download workflow</button>
+  <div id="status">The local bridge must be running on this PC.</div>
+  <script src="popup.js"></script>
+</body>
+</html>
