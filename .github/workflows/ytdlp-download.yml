@@ -56,7 +56,31 @@ jobs:
             echo "::error::חסר הסוד cookies. יוטיוב חוסמת הורדות משרתי GitHub בלי cookies. ראה הנחיות להוספה בהגדרות הריפו."
             exit 1
           fi
-          printf '%s\n' "$COOKIES" > cookies.txt
+          printf '%s\n' "$COOKIES" > cookies_raw.txt
+          # אם הקובץ בפורמט JSON (כמו שתוספים רבים מייצאים), ממירים אותו ל-Netscape
+          python3 - <<'PY'
+          import json, sys
+          raw = open("cookies_raw.txt", encoding="utf-8").read().strip()
+          if raw[:1] in "[{":
+              data = json.loads(raw)
+              if isinstance(data, dict):
+                  data = data.get("cookies", [])
+              lines = ["# Netscape HTTP Cookie File"]
+              for c in data:
+                  domain = c.get("domain", "")
+                  sub = "TRUE" if domain.startswith(".") else "FALSE"
+                  secure = "TRUE" if c.get("secure") else "FALSE"
+                  exp = c.get("expirationDate", c.get("expires", 0)) or 0
+                  prefix = "#HttpOnly_" if c.get("httpOnly") else ""
+                  lines.append("\t".join([
+                      prefix + domain, sub, c.get("path", "/"), secure,
+                      str(int(exp)), c.get("name", ""), c.get("value", "")]))
+              open("cookies.txt", "w", encoding="utf-8").write("\n".join(lines) + "\n")
+              print(f"Converted {len(data)} cookies from JSON to Netscape")
+          else:
+              open("cookies.txt", "w", encoding="utf-8").write(raw + "\n")
+          PY
+          rm -f cookies_raw.txt
 
       - name: Download channel
         run: |
