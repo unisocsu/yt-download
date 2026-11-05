@@ -1,73 +1,89 @@
-name: yt-dlp download
+name: Backup YouTube Channel
 
 on:
   workflow_dispatch:
     inputs:
-      url:
-        description: "Public video URL to download"
+      channel_url:
+        description: "כתובת הערוץ, למשל https://www.youtube.com/@MyChannel/videos"
         required: true
         type: string
-      format:
-        description: "Output format"
-        required: true
-        type: choice
-        options:
-          - mp4
-          - original
-        default: mp4
-
-permissions:
-  contents: read
-
-concurrency:
-  group: ytdlp-download-${{ github.run_id }}
-  cancel-in-progress: false
 
 jobs:
-  download:
+  backup:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 350
+    env:
+      CHANNEL_URL: ${{ inputs.channel_url }}
+
     steps:
-      - name: Install yt-dlp and FFmpeg
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-          python -m pip install --upgrade yt-dlp
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-      - name: Validate URL
-        env:
-          VIDEO_URL: ${{ inputs.url }}
-        run: |
-          python - <<'PY'
-          import os
-          from urllib.parse import urlparse
-          u = urlparse(os.environ["VIDEO_URL"].strip())
-          allowed = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be", "music.youtube.com"}
-          if u.scheme != "https" or (u.hostname or "").lower() not in allowed:
-              raise SystemExit("Only HTTPS YouTube URLs are accepted.")
-          PY
+      # yt-dlp צריך סביבת JavaScript כדי לחלץ סרטונים מיוטיוב
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
 
-      - name: Download video
-        env:
-          VIDEO_URL: ${{ inputs.url }}
-          OUTPUT_FORMAT: ${{ inputs.format }}
+      - name: Install yt-dlp and ffmpeg
         run: |
-          mkdir -p downloads
-          if [ "$OUTPUT_FORMAT" = "mp4" ]; then
-            yt-dlp --no-playlist --no-progress --format "bv*+ba/b" --merge-output-format mp4 --output "downloads/%(title).180B [%(id)s].%(ext)s" "$VIDEO_URL"
-          else
-            yt-dlp --no-playlist --no-progress --format "bv*+ba/b" --output "downloads/%(title).180B [%(id)s].%(ext)s" "$VIDEO_URL"
+          pip install -U "yt-dlp[default]" bgutil-ytdlp-pot-provider
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      # שירות שמייצר PO tokens, שיוטיוב דורשת מכתובות של שרתי ענן
+      - name: Start PO token provider
+        run: |
+          docker run --name bgutil-provider -d -p 4416:4416 --init brainicism/bgutil-ytdlp-pot-provider
+          sleep 10
+
+      # שומר את רשימת הסרטונים שכבר הורדו, כדי שבכל הרצה יורדו רק חדשים
+      - name: Restore download archive
+        uses: actions/cache@v4
+        with:
+          path: archive.txt
+          key: yt-archive-${{ github.run_id }}
+          restore-keys: yt-archive-
+
+      # אופציונלי: קובץ cookies של החשבון שלך (בפורמט Netscape) כסוד בשם cookies
+      # יוטיוב לעיתים חוסמת כתובות של שרתי ענן, וה-cookies עוזרים בזה
+      - name: Prepare cookies
+        env:
+          COOKIES: ${{ secrets.cookies }}
+        run: |
+          if [ -z "$COOKIES" ]; then
+            echo "::error::חסר הסוד cookies. יוטיוב חוסמת הורדות משרתי GitHub בלי cookies. ראה הנחיות להוספה בהגדרות הריפו."
+            exit 1
           fi
+          printf '%s\n' "$COOKIES" > cookies.txt
 
-      - name: Verify output
+      - name: Download channel
         run: |
-          test -n "$(find downloads -maxdepth 1 -type f -print -quit)"
-          find downloads -maxdepth 1 -type f -printf '%f (%s bytes)\n'
+          yt-dlp \
+            --cookies cookies.txt \
+            --js-runtimes node \
+            --download-archive archive.txt \
+            --format "bv*[height<=1080]+ba/b[height<=1080]" \
+            --merge-output-format mp4 \
+            --write-info-json \
+            --write-description \
+            --write-thumbnail \
+            --write-subs --sub-langs "all,-live_chat" \
+            --ignore-errors \
+            --retries 5 \
+            --sleep-interval 3 --max-sleep-interval 8 \
+            --output "backup/%(upload_date)s - %(title).150B [%(id)s].%(ext)s" \
+            "$CHANNEL_URL"
 
-      - name: Upload download artifact
+      - name: Remove cookies
+        if: always()
+        run: rm -f cookies.txt
+
+      - name: Upload backup
         uses: actions/upload-artifact@v4
         with:
-          name: ytdlp-download
-          path: downloads/*
-          if-no-files-found: error
-          retention-days: 3
+          name: youtube-backup-${{ github.run_number }}
+          path: backup/
+          retention-days: 30
+          if-no-files-found: ignore
