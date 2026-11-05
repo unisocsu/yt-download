@@ -3,8 +3,8 @@ name: Backup YouTube Channel
 on:
   workflow_dispatch:
     inputs:
-      channel_url:
-        description: "כתובת הערוץ, למשל https://www.youtube.com/@MyChannel/videos"
+      urls:
+        description: "כתובת ערוץ, פלייליסט או סרטון בודד. אפשר כמה כתובות, מופרדות ברווח או בפסיק"
         required: true
         type: string
 
@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 350
     env:
-      CHANNEL_URL: ${{ inputs.channel_url }}
+      URLS: ${{ inputs.urls }}
 
     steps:
       - name: Set up Python
@@ -84,7 +84,11 @@ jobs:
 
       - name: Download channel
         run: |
+          # מפצל את הכתובות (רווח, פסיק או שורה חדשה) לרשימה
+          mapfile -t URL_LIST < <(printf '%s' "$URLS" | tr ' ,' '\n\n' | sed '/^[[:space:]]*$/d')
+          echo "Downloading ${#URL_LIST[@]} URL(s)"
           yt-dlp \
+            --no-playlist \
             --cookies cookies.txt \
             --js-runtimes node \
             --download-archive archive.txt \
@@ -98,7 +102,7 @@ jobs:
             --retries 5 \
             --sleep-interval 3 --max-sleep-interval 8 \
             --output "backup/%(upload_date)s - %(title).150B [%(id)s].%(ext)s" \
-            "$CHANNEL_URL"
+            "${URL_LIST[@]}"
 
       - name: Remove cookies
         if: always()
