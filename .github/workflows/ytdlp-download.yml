@@ -7,6 +7,15 @@ on:
         description: "כתובת ערוץ, פלייליסט או סרטון בודד. אפשר כמה כתובות, מופרדות ברווח או בפסיק"
         required: true
         type: string
+      mode:
+        description: "מה להוריד"
+        required: true
+        type: choice
+        default: video
+        options:
+          - video            # וידאו בלבד (mp4)
+          - audio_mp3        # אודיו בלבד: מורידים את זרם האודיו ומקודדים ל-mp3
+          - video_and_mp3    # מורידים וידאו, שומרים אותו, ומקודדים ממנו גם mp3
 
 jobs:
   backup:
@@ -14,6 +23,7 @@ jobs:
     timeout-minutes: 350
     env:
       URLS: ${{ inputs.urls }}
+      MODE: ${{ inputs.mode }}
 
     steps:
       - name: Set up Python
@@ -39,10 +49,12 @@ jobs:
           sleep 10
 
       # שומר את רשימת הסרטונים שכבר הורדו, כדי שבכל הרצה יורדו רק חדשים
+      # לכל מצב יש רשימה נפרדת (archive-<mode>.txt), כדי שסרטון שירד כוידאו
+      # לא ידולג כשמבקשים אותו אחר כך כ-mp3
       - name: Restore download archive
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
-          path: archive.txt
+          path: archive-*.txt
           key: yt-archive-${{ github.run_id }}
           restore-keys: yt-archive-
 
@@ -86,21 +98,49 @@ jobs:
         run: |
           # מפצל את הכתובות (רווח, פסיק או שורה חדשה) לרשימה
           mapfile -t URL_LIST < <(printf '%s' "$URLS" | tr ' ,' '\n\n' | sed '/^[[:space:]]*$/d')
-          echo "Downloading ${#URL_LIST[@]} URL(s)"
+          echo "Mode: $MODE, downloading ${#URL_LIST[@]} URL(s)"
+
+          case "$MODE" in
+            audio_mp3)
+              # מורידים רק את זרם האודיו הטוב ביותר ומקודדים ל-mp3
+              MODE_ARGS=(
+                --format "ba/b"
+                --extract-audio --audio-format mp3 --audio-quality 0
+                --embed-metadata --embed-thumbnail --convert-thumbnails jpg
+              )
+              ;;
+            video_and_mp3)
+              # מורידים וידאו, שומרים את קובץ ה-mp4 (-k) ומקודדים ממנו גם mp3
+              MODE_ARGS=(
+                --format "bv*[height<=1080]+ba/b[height<=1080]"
+                --merge-output-format mp4
+                --extract-audio --audio-format mp3 --audio-quality 0 --keep-video
+                --write-thumbnail
+                --write-subs --sub-langs "all,-live_chat"
+              )
+              ;;
+            *)
+              MODE_ARGS=(
+                --format "bv*[height<=1080]+ba/b[height<=1080]"
+                --merge-output-format mp4
+                --write-thumbnail
+                --write-subs --sub-langs "all,-live_chat"
+              )
+              ;;
+          esac
+
           yt-dlp \
             --no-playlist \
             --cookies cookies.txt \
             --js-runtimes node \
-            --download-archive archive.txt \
-            --format "bv*[height<=1080]+ba/b[height<=1080]" \
-            --merge-output-format mp4 \
+            --download-archive "archive-$MODE.txt" \
+            "${MODE_ARGS[@]}" \
             --write-info-json \
             --write-description \
-            --write-thumbnail \
-            --write-subs --sub-langs "all,-live_chat" \
             --ignore-errors \
             --retries 5 \
-            --sleep-interval 3 --max-sleep-interval 8 \
+            --sleep-requests 1.5 \
+            --sleep-interval 10 --max-sleep-interval 25 \
             --output "backup/%(upload_date)s - %(title).150B [%(id)s].%(ext)s" \
             "${URL_LIST[@]}"
 
@@ -108,7 +148,17 @@ jobs:
         if: always()
         run: rm -f cookies.txt
 
+      # נשמר גם אם ההורדה נכשלה חלקית, כדי שסרטונים שירדו לא יורדו שוב
+      - name: Save download archive
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: archive-*.txt
+          key: yt-archive-${{ github.run_id }}
+
+      # רץ גם אם חלק מההורדות נכשלו, כדי לא לאבד את מה שכבר ירד
       - name: Upload backup
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: youtube-backup-${{ github.run_number }}
